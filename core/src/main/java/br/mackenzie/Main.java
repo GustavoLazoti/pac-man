@@ -25,6 +25,10 @@ public class Main implements ApplicationListener {
     float flapStrength = 2.2f;
     float groundY = 0f;
     boolean nextFlapMustBeQ = true;
+    final float WORLD_WIDTH = 12f;
+    final float WORLD_HEIGHT = 7.5f;
+    final float MONKEY_IDLE_SIZE = 1.2f;
+    final float MONKEY_RUN_FLY_SIZE = 1.5f;
 
     @Override
     public void create() {
@@ -32,11 +36,11 @@ public class Main implements ApplicationListener {
         idleTexture = new Texture("monkey.png");
         runTexture = new Texture("monkeyR.png");
         spriteBatch = new SpriteBatch();
-        viewport = new FitViewport(8, 5);
+        viewport = new FitViewport(WORLD_WIDTH, WORLD_HEIGHT); //Variavelk global pra ficar mais facil o ajuste.
 
         monkeySprite = new Sprite(idleTexture);
-        monkeySprite.setSize(2, 2);
-        monkeySprite.setPosition(3, 2.5f); // Teste para ele começar no meio da tela caindo.
+        monkeySprite.setSize(MONKEY_IDLE_SIZE, MONKEY_IDLE_SIZE); //Variavelk global pra ficar mais facil o ajuste.
+        monkeySprite.setPosition(1, 4f); // Teste para ele começar no meio da tela caindo.
     }
 
     @Override
@@ -116,10 +120,10 @@ public class Main implements ApplicationListener {
             currentState = newState;
 
             if (currentState == State.IDLE) {
-                monkeySprite.setSize(2, 2);
+                monkeySprite.setSize(MONKEY_IDLE_SIZE, MONKEY_IDLE_SIZE);
                 monkeySprite.setTexture(idleTexture);
             } else {
-                monkeySprite.setSize(2.5f, 2.5f);
+                monkeySprite.setSize(MONKEY_RUN_FLY_SIZE, MONKEY_RUN_FLY_SIZE);
                 monkeySprite.setTexture(runTexture);
             }
         }
