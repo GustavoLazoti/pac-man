@@ -7,6 +7,8 @@ import com.badlogic.gdx.graphics.Color;
 import com.badlogic.gdx.graphics.Texture;
 import com.badlogic.gdx.graphics.g2d.Sprite;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
+import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
+import com.badlogic.gdx.math.Rectangle;
 import com.badlogic.gdx.utils.ScreenUtils;
 import com.badlogic.gdx.utils.viewport.FitViewport;
 
@@ -29,6 +31,9 @@ public class Main implements ApplicationListener {
     final float WORLD_HEIGHT = 7.5f;
     final float MONKEY_IDLE_SIZE = 1.2f;
     final float MONKEY_RUN_FLY_SIZE = 1.5f;
+    ShapeRenderer shapeRenderer;
+    Rectangle yellowSquare;
+    boolean collidingWithYellow = false;
 
     @Override
     public void create() {
@@ -41,6 +46,9 @@ public class Main implements ApplicationListener {
         monkeySprite = new Sprite(idleTexture);
         monkeySprite.setSize(MONKEY_IDLE_SIZE, MONKEY_IDLE_SIZE); //Variavelk global pra ficar mais facil o ajuste.
         monkeySprite.setPosition(1, 4f); // Teste para ele começar no meio da tela caindo.
+
+        shapeRenderer = new ShapeRenderer();
+        yellowSquare = new Rectangle(9.5f, 0f, 1f, 1f);
     }
 
     @Override
@@ -113,6 +121,17 @@ public class Main implements ApplicationListener {
             monkeySprite.setY(maxY);
             verticalVelocity = 0f;
         }
+
+        if (monkeySprite.getX() < 0) {
+            monkeySprite.setX(0);
+        }
+
+        float maxX = viewport.getWorldWidth() - monkeySprite.getWidth();
+        if (monkeySprite.getX() > maxX) {
+            monkeySprite.setX(maxX);
+        }
+
+        collidingWithYellow = monkeySprite.getBoundingRectangle().overlaps(yellowSquare);
     }
 
     public void applyState(State newState) {
@@ -136,6 +155,13 @@ public class Main implements ApplicationListener {
     public void draw() {
         ScreenUtils.clear(Color.BLACK);
         viewport.apply();
+
+        shapeRenderer.setProjectionMatrix(viewport.getCamera().combined);
+        shapeRenderer.begin(ShapeRenderer.ShapeType.Filled);
+        shapeRenderer.setColor(collidingWithYellow ? Color.ORANGE : Color.YELLOW);
+        shapeRenderer.rect(yellowSquare.x, yellowSquare.y, yellowSquare.width, yellowSquare.height);
+        shapeRenderer.end();
+
         spriteBatch.setProjectionMatrix(viewport.getCamera().combined);
         spriteBatch.begin();
         monkeySprite.draw(spriteBatch);
