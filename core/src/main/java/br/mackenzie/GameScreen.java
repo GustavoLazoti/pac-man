@@ -12,6 +12,8 @@ import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
 import com.badlogic.gdx.math.Rectangle;
 import com.badlogic.gdx.utils.ScreenUtils;
 import com.badlogic.gdx.utils.viewport.FitViewport;
+import com.badlogic.gdx.graphics.g2d.BitmapFont;
+import com.badlogic.gdx.utils.viewport.ScreenViewport;
 
 public class GameScreen implements Screen {
     private final Game game;
@@ -34,7 +36,12 @@ public class GameScreen implements Screen {
     final float MONKEY_RUN_FLY_SIZE = 1.5f;
     ShapeRenderer shapeRenderer;
     Rectangle yellowSquare;
-    boolean collidingWithYellow = false;
+    boolean yellowCollected = false;
+    int score = 0;
+    final int COLLECTIBLE_POINTS = 10;
+    final float COLLECTIBLE_SIZE = MONKEY_IDLE_SIZE / 2f;
+    BitmapFont scoreFont;
+    ScreenViewport uiViewport;
 
     public GameScreen(Game game) {
         this.game = game;
@@ -52,7 +59,10 @@ public class GameScreen implements Screen {
         monkeySprite.setPosition(1, 4f); // Teste para ele começar no meio da tela caindo.
 
         shapeRenderer = new ShapeRenderer();
-        yellowSquare = new Rectangle(9.5f, 0f, 1f, 1f);
+        yellowSquare = new Rectangle(9.5f, 0f, COLLECTIBLE_SIZE, COLLECTIBLE_SIZE);
+        uiViewport = new ScreenViewport();
+        scoreFont = new BitmapFont();
+        scoreFont.getData().setScale(2f);
     }
 
     @Override
@@ -70,6 +80,7 @@ public class GameScreen implements Screen {
 
         // Resize your application here. The parameters represent the new window size.
         viewport.update(width, height, true);
+        uiViewport.update(width, height, true);
     }
 
     public void input() {
@@ -134,7 +145,10 @@ public class GameScreen implements Screen {
             monkeySprite.setX(maxX);
         }
 
-        collidingWithYellow = monkeySprite.getBoundingRectangle().overlaps(yellowSquare);
+        if (!yellowCollected && monkeySprite.getBoundingRectangle().overlaps(yellowSquare)) {
+            yellowCollected = true;
+            score += COLLECTIBLE_POINTS;
+        }
     }
 
     public void applyState(State newState) {
@@ -161,14 +175,29 @@ public class GameScreen implements Screen {
 
         shapeRenderer.setProjectionMatrix(viewport.getCamera().combined);
         shapeRenderer.begin(ShapeRenderer.ShapeType.Filled);
-        shapeRenderer.setColor(collidingWithYellow ? Color.ORANGE : Color.YELLOW);
-        shapeRenderer.rect(yellowSquare.x, yellowSquare.y, yellowSquare.width, yellowSquare.height);
+
+        if (!yellowCollected) {
+            shapeRenderer.setColor(Color.YELLOW);
+            shapeRenderer.rect(yellowSquare.x, yellowSquare.y, yellowSquare.width, yellowSquare.height);
+        }
+
         shapeRenderer.end();
 
         spriteBatch.setProjectionMatrix(viewport.getCamera().combined);
         spriteBatch.begin();
         monkeySprite.draw(spriteBatch);
         spriteBatch.end();
+        uiViewport.apply();
+
+        spriteBatch.setProjectionMatrix(uiViewport.getCamera().combined);
+        spriteBatch.begin();
+
+        scoreFont.setColor(Color.WHITE);
+        scoreFont.draw(spriteBatch, "Pontos: " + score, 20, uiViewport.getWorldHeight() - 20);
+
+        spriteBatch.end();
+
+        viewport.apply();
     }
 
     public void updateDirection() {
@@ -183,7 +212,11 @@ public class GameScreen implements Screen {
 
     @Override
     public void dispose() {
-
+        idleTexture.dispose();
+        runTexture.dispose();
+        spriteBatch.dispose();
+        shapeRenderer.dispose();
+        scoreFont.dispose();
     }
 
     @Override public void pause() {
