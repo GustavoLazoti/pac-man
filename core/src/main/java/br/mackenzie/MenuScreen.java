@@ -83,7 +83,7 @@ public class MenuScreen implements Screen {
     /** Se clicar no botão, vai para o GameScreen */
     private void checkClick() {
         if (hoveringButton && Gdx.input.justTouched()) {
-            game.setScreen(new GameScreen(game));
+            game.setScreen(new DifficultyScreen(game));
         }
     }
 

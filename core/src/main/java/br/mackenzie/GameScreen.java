@@ -16,12 +16,16 @@ import com.badlogic.gdx.graphics.g2d.BitmapFont;
 import com.badlogic.gdx.utils.viewport.ScreenViewport;
 import com.badlogic.gdx.math.MathUtils;
 import com.badlogic.gdx.utils.Array;
+import com.badlogic.gdx.math.Vector2;
 import com.badlogic.gdx.math.Vector3;
 import com.badlogic.gdx.graphics.g2d.GlyphLayout;
 
 
 public class GameScreen implements Screen {
     private final Game game;
+
+    // --- dificuldade ---
+    private Difficulty difficulty;
 
     Texture idleTexture;
     Texture runTexture;
@@ -34,6 +38,8 @@ public class GameScreen implements Screen {
     float gravity = -1.2f;
     float flapStrength = 2.2f;
     float groundY = 0f;
+    float knockbackVelocityX = 0f;
+    float knockbackVelocityY = 0f;
     boolean nextFlapMustBeQ = true;
     final float WORLD_WIDTH = 12f;
     final float WORLD_HEIGHT = 7.5f;
@@ -47,9 +53,26 @@ public class GameScreen implements Screen {
     final int COLLECTIBLE_POINTS = 10;
     final float COLLECTIBLE_SIZE = MONKEY_IDLE_SIZE / 2f;
     ScreenViewport uiViewport;
+
+    // --- blocos vermelhos (inimigos lineares) ---
     Array<Rectangle> redBlocks;
-    final int RED_BLOCK_COUNT = 5;
+    Array<Vector2> redBlockDirections; // direção de movimento de cada bloco
     final float RED_BLOCK_SIZE = 0.7f;
+    final float RED_BLOCK_SPEED = 2.5f;
+
+    // --- perseguidor (só no HARD) ---
+    Rectangle chaserBlock;
+    final float CHASER_SIZE = 0.9f;
+    final float CHASER_SPEED = 1.8f;
+
+    // --- projéteis dos inimigos (só no HARD) ---
+    Array<Rectangle> bullets;
+    Array<Vector2> bulletDirections;
+    final float BULLET_SIZE = 0.25f;
+    final float BULLET_SPEED = 4f;
+    float bulletTimer = 0f;
+    final float BULLET_INTERVAL = 2f;
+
     int lives = 3;
     boolean gameOver = false;
     boolean win = false;
@@ -66,6 +89,9 @@ public class GameScreen implements Screen {
 
     @Override
     public void show() {
+        // lê a dificuldade escolhida pelo jogador
+        difficulty = GameManager.getInstance().getDifficulty();
+
         idleTexture = new Texture("monkey.png");
         runTexture = new Texture("monkeyR.png");
 
@@ -82,23 +108,47 @@ public class GameScreen implements Screen {
         monkeySprite = new Sprite(idleTexture);
         monkeySprite.setSize(MONKEY_IDLE_SIZE, MONKEY_IDLE_SIZE);
         monkeySprite.setPosition(1, 4f);
-        shapeRenderer = new ShapeRenderer();
+
         redBlocks = new Array<>();
+        redBlockDirections = new Array<>();
+        bullets = new Array<>();
+        bulletDirections = new Array<>();
+
         createRedBlocks();
+
+        // perseguidor só existe no HARD
+        if (difficulty.enemiesShoot) {
+            chaserBlock = new Rectangle(
+                WORLD_WIDTH - 1.5f, WORLD_HEIGHT / 2f,
+                CHASER_SIZE, CHASER_SIZE
+            );
+        }
+
         bananas = new Array<>();
         createBananas();
     }
 
     public void createRedBlocks() {
         redBlocks.clear();
+        redBlockDirections.clear();
 
-        for (int i = 0; i < RED_BLOCK_COUNT; i++) {
+        // EASY: sem inimigos
+        if (!difficulty.hasEnemies) return;
+
+        // NORMAL: 5 blocos  |  HARD: 8 blocos
+        int count = difficulty.enemiesShoot ? 8 : 5;
+
+        // direções possíveis: direita, esquerda, cima, baixo
+        float[][] dirs = { {1, 0}, {-1, 0}, {0, 1}, {0, -1} };
+
+        for (int i = 0; i < count; i++) {
             float x = MathUtils.random(2f, WORLD_WIDTH - RED_BLOCK_SIZE);
             float y = MathUtils.random(0.5f, WORLD_HEIGHT - RED_BLOCK_SIZE);
+            redBlocks.add(new Rectangle(x, y, RED_BLOCK_SIZE, RED_BLOCK_SIZE));
 
-            Rectangle redBlock = new Rectangle(x, y, RED_BLOCK_SIZE, RED_BLOCK_SIZE);
-
-            redBlocks.add(redBlock);
+            // cada bloco recebe uma direção aleatória
+            float[] dir = dirs[MathUtils.random(0, dirs.length - 1)];
+            redBlockDirections.add(new Vector2(dir[0], dir[1]));
         }
     }
 
@@ -171,7 +221,7 @@ public class GameScreen implements Screen {
     }
 
     public void input() {
-        if (gameOver|| win) {
+        if (gameOver || win) {
             return;
         }
 
@@ -245,6 +295,12 @@ public class GameScreen implements Screen {
 
         float delta = Gdx.graphics.getDeltaTime();
 
+        // decrementa aqui, uma vez por frame
+        if (damageCooldown > 0) {
+            damageCooldown -= delta;
+        }
+
+        // --- física do macaco ---
         verticalVelocity += gravity * delta;
         monkeySprite.translateY(verticalVelocity * delta);
 
@@ -268,13 +324,154 @@ public class GameScreen implements Screen {
             monkeySprite.setX(maxX);
         }
 
-        checkBananaCollection();
+        float knockbackFriction = 8f;
+        knockbackVelocityX = knockbackVelocityX - knockbackVelocityX * knockbackFriction * delta;
+        knockbackVelocityY = knockbackVelocityY - knockbackVelocityY * knockbackFriction * delta;
+        monkeySprite.translateX(knockbackVelocityX * delta);
+        monkeySprite.translateY(knockbackVelocityY * delta);
 
-        if (win) {
-            return;
+        // --- lógica dos inimigos (NORMAL e HARD) ---
+        if (difficulty.hasEnemies) {
+            updateRedBlocks(delta);
         }
 
-        checkRedBlockDamage(delta);
+        // --- perseguidor e projéteis (só HARD) ---
+        if (difficulty.enemiesShoot) {
+            updateChaser(delta);
+            updateBullets(delta);
+            spawnBullets(delta);
+        }
+
+        checkBananaCollection();
+
+        if (win) return;
+
+        checkRedBlockDamage();
+    }
+
+    // move cada bloco na sua direção e rebate nas bordas
+    public void updateRedBlocks(float delta) {
+        for (int i = 0; i < redBlocks.size; i++) {
+            Rectangle block = redBlocks.get(i);
+            Vector2 dir = redBlockDirections.get(i);
+
+            block.x += dir.x * RED_BLOCK_SPEED * delta;
+            block.y += dir.y * RED_BLOCK_SPEED * delta;
+
+            // rebate horizontalmente
+            if (block.x < 0) {
+                block.x = 0;
+                dir.x = Math.abs(dir.x);
+            } else if (block.x + block.width > WORLD_WIDTH) {
+                block.x = WORLD_WIDTH - block.width;
+                dir.x = -Math.abs(dir.x);
+            }
+
+            // rebate verticalmente
+            if (block.y < 0) {
+                block.y = 0;
+                dir.y = Math.abs(dir.y);
+            } else if (block.y + block.height > WORLD_HEIGHT) {
+                block.y = WORLD_HEIGHT - block.height;
+                dir.y = -Math.abs(dir.y);
+            }
+        }
+    }
+
+    // perseguidor se move em direção ao macaco
+    public void updateChaser(float delta) {
+        if (chaserBlock == null) return;
+
+        float monkeyX = monkeySprite.getX() + monkeySprite.getWidth() / 2f;
+        float monkeyY = monkeySprite.getY() + monkeySprite.getHeight() / 2f;
+
+        float dx = monkeyX - (chaserBlock.x + chaserBlock.width / 2f);
+        float dy = monkeyY - (chaserBlock.y + chaserBlock.height / 2f);
+        float len = (float) Math.sqrt(dx * dx + dy * dy);
+
+        if (len > 0) {
+            chaserBlock.x += (dx / len) * CHASER_SPEED * delta;
+            chaserBlock.y += (dy / len) * CHASER_SPEED * delta;
+        }
+
+        // dano do perseguidor usa o mesmo cooldown
+        if (damageCooldown <= 0 && monkeySprite.getBoundingRectangle().overlaps(chaserBlock)) {
+            lives--;
+            damageCooldown = DAMAGE_COOLDOWN_TIME;
+
+            if (len > 0) {
+                float knockbackStrength = 10f;
+                knockbackVelocityX = (dx / len) * knockbackStrength;
+                knockbackVelocityY = (dy / len) * knockbackStrength;
+            }
+
+            if (lives <= 0) {
+                lives = 0;
+                gameOver = true;
+            }
+        }
+    }
+
+    // spawna projéteis a partir de cada bloco vermelho na direção do macaco
+    public void spawnBullets(float delta) {
+        bulletTimer += delta;
+        if (bulletTimer < BULLET_INTERVAL) return;
+        bulletTimer = 0f;
+
+        float monkeyX = monkeySprite.getX() + monkeySprite.getWidth() / 2f;
+        float monkeyY = monkeySprite.getY() + monkeySprite.getHeight() / 2f;
+
+        for (Rectangle block : redBlocks) {
+            float originX = block.x + block.width / 2f;
+            float originY = block.y + block.height / 2f;
+
+            float dx = monkeyX - originX;
+            float dy = monkeyY - originY;
+            float len = (float) Math.sqrt(dx * dx + dy * dy);
+
+            if (len > 0) {
+                bullets.add(new Rectangle(
+                    originX - BULLET_SIZE / 2f,
+                    originY - BULLET_SIZE / 2f,
+                    BULLET_SIZE, BULLET_SIZE
+                ));
+                bulletDirections.add(new Vector2(dx / len, dy / len));
+            }
+        }
+    }
+
+    // move projéteis e verifica colisão com o macaco
+    public void updateBullets(float delta) {
+        Rectangle monkeyRect = monkeySprite.getBoundingRectangle();
+
+        for (int i = bullets.size - 1; i >= 0; i--) {
+            Rectangle bullet = bullets.get(i);
+            Vector2 dir = bulletDirections.get(i);
+
+            bullet.x += dir.x * BULLET_SPEED * delta;
+            bullet.y += dir.y * BULLET_SPEED * delta;
+
+            // remove se saiu da tela
+            if (bullet.x < 0 || bullet.x > WORLD_WIDTH ||
+                bullet.y < 0 || bullet.y > WORLD_HEIGHT) {
+                bullets.removeIndex(i);
+                bulletDirections.removeIndex(i);
+                continue;
+            }
+
+            // dano ao macaco
+            if (damageCooldown <= 0 && monkeyRect.overlaps(bullet)) {
+                lives--;
+                damageCooldown = DAMAGE_COOLDOWN_TIME;
+                bullets.removeIndex(i);
+                bulletDirections.removeIndex(i);
+
+                if (lives <= 0) {
+                    lives = 0;
+                    gameOver = true;
+                }
+            }
+        }
     }
 
     public void checkBananaCollection() {
@@ -302,22 +499,26 @@ public class GameScreen implements Screen {
         }
     }
 
-    public void checkRedBlockDamage(float delta) {
-        if (damageCooldown > 0) {
-            damageCooldown -= delta;
-            return;
-        }
+    public void checkRedBlockDamage() {
+        if (damageCooldown > 0) return;
 
         Rectangle monkeyRectangle = monkeySprite.getBoundingRectangle();
 
-        for (int i = redBlocks.size - 1; i >= 0; i--) {
-            Rectangle redBlock = redBlocks.get(i);
-
+        for (Rectangle redBlock : redBlocks) {
             if (monkeyRectangle.overlaps(redBlock)) {
                 lives--;
                 damageCooldown = DAMAGE_COOLDOWN_TIME;
 
-                redBlocks.removeIndex(i);
+                // calcula direção oposta ao bloco e empurra o macaco
+                float dx = monkeySprite.getX() - redBlock.x;
+                float dy = monkeySprite.getY() - redBlock.y;
+                float len = (float) Math.sqrt(dx * dx + dy * dy);
+
+                if (len > 0) {
+                    float knockbackStrength = 10f;
+                    knockbackVelocityX = (dx / len) * knockbackStrength;
+                    knockbackVelocityY = (dy / len) * knockbackStrength;
+                }
 
                 if (lives <= 0) {
                     lives = 0;
@@ -351,30 +552,44 @@ public class GameScreen implements Screen {
         ScreenUtils.clear(Color.BLACK);
         viewport.apply();
 
-        // Desenha objetos do mundo: coletável e blocos vermelhos
         shapeRenderer.setProjectionMatrix(viewport.getCamera().combined);
         shapeRenderer.begin(ShapeRenderer.ShapeType.Filled);
 
+        // bananas
         shapeRenderer.setColor(Color.YELLOW);
-
         for (Rectangle banana : bananas) {
             shapeRenderer.rect(banana.x, banana.y, banana.width, banana.height);
         }
 
+        // blocos vermelhos (inimigos lineares)
         shapeRenderer.setColor(Color.RED);
         for (Rectangle redBlock : redBlocks) {
             shapeRenderer.rect(redBlock.x, redBlock.y, redBlock.width, redBlock.height);
         }
 
+        // perseguidor (roxo) — só no HARD
+        if (difficulty.enemiesShoot && chaserBlock != null) {
+            shapeRenderer.setColor(Color.PURPLE);
+            shapeRenderer.rect(chaserBlock.x, chaserBlock.y, chaserBlock.width, chaserBlock.height);
+        }
+
+        // projéteis (laranja) — só no HARD
+        if (difficulty.enemiesShoot) {
+            shapeRenderer.setColor(Color.ORANGE);
+            for (Rectangle bullet : bullets) {
+                shapeRenderer.rect(bullet.x, bullet.y, bullet.width, bullet.height);
+            }
+        }
+
         shapeRenderer.end();
 
-        // Desenha o macaco
+        // macaco
         spriteBatch.setProjectionMatrix(viewport.getCamera().combined);
         spriteBatch.begin();
         monkeySprite.draw(spriteBatch);
         spriteBatch.end();
 
-        // Desenha a interface: pontos, vidas e Game Over
+        // HUD
         uiViewport.apply();
 
         if (gameOver || win) {
@@ -426,7 +641,6 @@ public class GameScreen implements Screen {
 
         spriteBatch.end();
 
-        // Volta para o viewport do mundo
         viewport.apply();
     }
 
@@ -449,13 +663,7 @@ public class GameScreen implements Screen {
         if (hudFont != null) hudFont.dispose();
     }
 
-    @Override public void pause() {
-
-    }
-    @Override public void resume() {
-
-    }
-    @Override public void hide() {
-
-    }
+    @Override public void pause() {}
+    @Override public void resume() {}
+    @Override public void hide() {}
 }
